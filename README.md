@@ -4,7 +4,7 @@ Fresh rebuild from scratch per the Ultimate A–Z Master Prompt (Phases 1–30).
 
 🌐 **Live demo (frontend only):** https://nakugaon-association-new.netlify.app
 — GitHub: https://github.com/wpsabbir688/nakugaon-association-new
-— Backend API + MongoDB are **not live yet**, so login/member/payment features
+— Backend API + PostgreSQL are **not live yet**, so login/member/payment features
 show loading/error/empty states until a backend is deployed. Do not present
 the frontend alone as the full working system.
 The previous project (`~/workspace/nakugaon-association/`, live on Netlify/Render/Neon)
@@ -20,9 +20,13 @@ explicitly confirmed. Do not delete the old project, its repo, or its live DB.
 
 - Frontend: React 19 (JSX only) + Vite 6 + React Router 7 + Tailwind v4 +
   Framer Motion + Lucide + Axios + React Hook Form + Zod + Recharts
-- Backend: Node.js + Express (ES modules) + Mongoose/MongoDB + bcrypt +
+- Backend: Node.js + Express (ES modules) + Prisma 6 + PostgreSQL + bcrypt +
   JWT in an HttpOnly cookie + Helmet + rate limiting + env CORS allowlist +
   Zod validation + central error handling
+  (migrated 2026-10-25 from MongoDB/Mongoose — see
+  [docs/POSTGRES_MIGRATION.md](docs/POSTGRES_MIGRATION.md); the old live
+  `nakugaon` Neon database is NEVER used — deployment needs its own
+  separate Neon database + a direct, non-pooled `DATABASE_URL`)
 - Tests: Vitest + Supertest (server), production build (client)
 
 ## Accounting rules (server-authoritative, single owner: `server/src/services/`)
@@ -70,20 +74,17 @@ explicitly confirmed. Do not delete the old project, its repo, or its live DB.
 ## Run locally (dev)
 
 ```bash
-# 1. Local MongoDB replica set (dev-only binary, gitignored, already in .local-mongo/)
-cd ~/workspace/nakugaon-association-new/.local-mongo
-./mongodb-linux-x86_64-ubuntu2204-7.0.24/bin/mongod --replSet rs0 \
-  --bind_ip 127.0.0.1 --port 27019 --dbpath ./data --fork --logpath ./mongod.log
-# wait until it reports PRIMARY (transactions require a replica set)
+# 1. Local PostgreSQL 16 (disposable cluster in /tmp/nakpg)
+bash server/scripts/local-postgres.sh
 
 # 2. Backend (port 5000) — copy server/.env.example to server/.env first
-cd ../server && npm install && npm start
+cd server && npm install && npm run prisma:deploy && npm start
 
 # 3. Frontend (port 5173, /api proxied to localhost:5000)
 cd ../client && npm install && npm run dev
 ```
 
-## Tests (verified 2026-10-25: 16/16 pass, client build passes)
+## Tests (verified 2026-10-25: 28/28 pass, client build passes, BN/EN 170/170)
 
 ```bash
 cd ~/workspace/nakugaon-association-new
@@ -91,7 +92,8 @@ cd ~/workspace/nakugaon-association-new
 # tests in tests/ (outside server/) resolve supertest/vitest from server/.
 # It is gitignored and must exist before running the suite:
 ln -s server/node_modules node_modules   # only if the symlink is missing
-TEST_MONGODB_URI='mongodb://127.0.0.1:27019/nakugaon-test?replicaSet=rs0' \
+# WARNING: the suite DROPS the database schema — disposable test DB only.
+DATABASE_URL='postgresql://nakugaon@127.0.0.1:5433/nakugaon_test' \
   ./server/node_modules/.bin/vitest run tests
 cd client && npm run build
 ```
@@ -101,13 +103,17 @@ cd client && npm run build
 - [docs/AUDIT.md](docs/AUDIT.md) — Phase 1 audit of the old project (read-only)
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture plan, API contract,
   accounting formulas, role matrix, risks, checklist
+- [docs/POSTGRES_MIGRATION.md](docs/POSTGRES_MIGRATION.md) — 2026-10-25
+  MongoDB → Prisma/PostgreSQL migration: file-by-file changes, contract
+  changes, and the remaining deploy steps (separate Neon DB + Render)
 
 ## Known limitations / remaining work
 
-- Production needs a real MongoDB replica set (Atlas) for transactions, SMTP for
-  password reset, and object storage for production uploads (local disk in dev).
-- No audit-log read endpoint yet (frontend audit page shows no invented logs);
-  no member profile-correction endpoint yet (form does not claim success).
+- Production needs its own separate Neon PostgreSQL database (direct,
+  non-pooled URL — pooled URLs reject Prisma interactive transactions),
+  SMTP for password reset, and object storage for production uploads
+  (local disk in dev). Never point at the old live `nakugaon` database.
+- No member profile-correction endpoint yet (form does not claim success).
 - Client does not yet send `Idempotency-Key` on vehicle creates (server supports
   it; double-submit currently relies on button disabling). Member dropdowns cap
   at 100 rows (no search/pagination for larger lists yet).
@@ -118,11 +124,11 @@ cd client && npm run build
 - Field-name mapping between frontend forms and backend schemas was defined by
   a shared contract but not exhaustively spot-checked end-to-end for every form.
 
-## Deployment — NOT DONE (needs Sabbir's explicit approvals)
+## Deployment — backend NOT DONE (frontend is live; see migration doc)
 
-No GitHub repo, Netlify/Render/Atlas account, domain, or cutover has been created
-for this build. Exact next steps needing him are listed in the coordinator's
-final report: new GitHub repo name approval before any push, production MongoDB
-(Atlas) account, SMTP details, confirmed association data (committee, notices,
-contact, registration), and an explicit cutover/deletion decision for the old
-project only after this build is verified.
+Frontend is live on Netlify (frontend-only). Backend deploy still needs:
+a separate Neon database (not the old live one), a Render service with a
+direct `DATABASE_URL`, a one-time `replace:admin` run, and `VITE_API_URL`
+on Netlify — full steps in
+[docs/POSTGRES_MIGRATION.md](docs/POSTGRES_MIGRATION.md). No cutover or
+deletion of the old project until this build is verified live.

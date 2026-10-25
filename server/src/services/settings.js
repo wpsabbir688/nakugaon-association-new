@@ -1,6 +1,7 @@
-import { SiteSetting } from '../models/SiteSetting.js';
-export async function getSettings(session = null) {
-  let s = await SiteSetting.findOne({ key: 'site' }, null, session ? { session } : {});
-  if (!s) { const docs = await SiteSetting.create([{ key: 'site' }], session ? { session } : {}); s = docs[0]; }
+import { prisma } from '../db/prisma.js';
+export async function getSettings(db = null) {
+  const client = db || prisma;
+  let s = await client.siteSetting.findUnique({ where: { key: 'site' } });
+  if (!s) s = await client.siteSetting.create({ data: { key: 'site' } });
   return s;
 }

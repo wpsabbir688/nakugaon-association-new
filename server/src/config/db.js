@@ -1,12 +1,11 @@
-import mongoose from 'mongoose';
+import { prisma } from '../db/prisma.js';
 import { logger } from './logger.js';
-export async function connectDb(uri) {
-  mongoose.set('strictQuery', true);
-  await mongoose.connect(uri);
-  logger.info('mongodb connected');
+export async function connectDb() {
+  await prisma.$connect();
+  logger.info('postgres connected');
 }
-export async function disconnectDb() { await mongoose.disconnect(); }
-export const isReplicaSet = () => {
-  // Best-effort detection: memory replset / Atlas report a setName on the topology.
-  try { const t = mongoose.connection?.client?.topology; return Boolean(t?.s?.options?.replicaSet || t?.description?.setName); } catch { return false; }
-};
+export async function disconnectDb() { await prisma.$disconnect(); }
+// True when the database answers a trivial query (used by /settings/status).
+export async function dbConnected() {
+  try { await prisma.$queryRaw`SELECT 1`; return true; } catch { return false; }
+}

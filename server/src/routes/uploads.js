@@ -4,7 +4,8 @@ import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { FileMetadata } from '../models/FileMetadata.js';
+import { prisma } from '../db/prisma.js';
+import { ser } from '../db/serialize.js';
 import { requireAuth, requireRole, STAFF } from '../middleware/auth.js';
 import { ok, badRequest, notFound, forbidden } from '../errors.js';
 import { resolveMember, enforceMemberAccess } from './helpers.js';
@@ -20,17 +21,17 @@ r.post('/members/:memberId', requireRole(...STAFF), upload.single('file'), async
     if (!req.file) throw badRequest('No file uploaded');
     const member = await resolveMember(req.params.memberId);
     const kind = req.body.kind === 'document' ? 'document' : 'photo';
-    const meta = await FileMetadata.create({ member: member._id, kind, originalName: req.file.originalname, storedName: req.file.filename, mimeType: req.file.mimetype, size: req.file.size, uploadedBy: req.user.id });
-    ok(res, meta, 201);
+    const meta = await prisma.fileMetadata.create({ data: { memberId: member.id, kind, originalName: req.file.originalname, storedName: req.file.filename, mimeType: req.file.mimetype, size: req.file.size, uploadedById: req.user.id } });
+    ok(res, ser(meta), 201);
   } catch (e) { next(e); }
 });
 r.get('/members/:memberId', async (req, res, next) => {
   try { const member = await resolveMember(req.params.memberId); await enforceMemberAccess(req, member); if (req.user.role !== 'MEMBER' && !STAFF.includes(req.user.role)) throw forbidden();
-    const files = await FileMetadata.find({ member: member._id }).sort({ createdAt: -1 }).lean(); ok(res, files.map((f) => ({ ...f, downloadUrl: `/api/v1/uploads/${f._id}` }))); } catch (e) { next(e); }
+    const files = await prisma.fileMetadata.findMany({ where: { memberId: member.id }, orderBy: { createdAt: 'desc' } }); ok(res, files.map((f) => ({ ...ser(f), downloadUrl: `/api/v1/uploads/${f.id}` }))); } catch (e) { next(e); }
 });
 r.get('/:id', async (req, res, next) => {
-  try { const meta = await FileMetadata.findById(req.params.id); if (!meta) throw notFound('File not found');
-    if (req.user.role === 'MEMBER' && String(meta.member) !== req.user.memberId) throw forbidden();
+  try { const meta = await prisma.fileMetadata.findUnique({ where: { id: req.params.id } }); if (!meta) throw notFound('File not found');
+    if (req.user.role === 'MEMBER' && String(meta.memberId) !== req.user.memberId) throw forbidden();
     if (req.user.role !== 'MEMBER' && !STAFF.includes(req.user.role)) throw forbidden();
     const filePath = path.join(uploadDir, meta.storedName);
     if (!fs.existsSync(filePath)) throw notFound('File missing from disk');

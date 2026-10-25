@@ -11,23 +11,20 @@
 // This script is NOT run automatically and must never be pointed at a live
 // database except by an explicit deployment decision with host env vars.
 import bcrypt from 'bcryptjs';
-import mongoose from 'mongoose';
-import { User } from '../models/User.js';
-import { env } from '../config/env.js';
+import { prisma } from '../db/prisma.js';
 const email = process.env.ADMIN_EMAIL, password = process.env.ADMIN_PASSWORD, name = process.env.ADMIN_NAME || 'Administrator';
 if (!email || !password) { console.error('ADMIN_EMAIL and ADMIN_PASSWORD env vars are required'); process.exit(1); }
 if (password.length < 8) { console.error('ADMIN_PASSWORD must be at least 8 characters'); process.exit(1); }
-await mongoose.connect(env.mongodbUri);
 const target = email.toLowerCase();
-const removed = await User.deleteMany({ role: 'SUPER_ADMIN', email: { $ne: target } });
-const existing = await User.findOne({ email: target });
+const removed = await prisma.user.deleteMany({ where: { role: 'SUPER_ADMIN', email: { not: target } } });
+const existing = await prisma.user.findUnique({ where: { email: target } });
 if (!existing) {
-  await User.create({ name, email: target, passwordHash: await bcrypt.hash(password, 12), role: 'SUPER_ADMIN' });
-  console.log(`SUPER_ADMIN created: ${target} (removed ${removed.deletedCount} other SUPER_ADMIN account(s))`);
+  await prisma.user.create({ data: { name, email: target, passwordHash: await bcrypt.hash(password, 12), role: 'SUPER_ADMIN' } });
+  console.log(`SUPER_ADMIN created: ${target} (removed ${removed.count} other SUPER_ADMIN account(s))`);
 } else if (existing.role !== 'SUPER_ADMIN') {
-  existing.role = 'SUPER_ADMIN'; await existing.save();
-  console.log(`SUPER_ADMIN promoted: ${target} (removed ${removed.deletedCount} other SUPER_ADMIN account(s))`);
+  await prisma.user.update({ where: { id: existing.id }, data: { role: 'SUPER_ADMIN' } });
+  console.log(`SUPER_ADMIN promoted: ${target} (removed ${removed.count} other SUPER_ADMIN account(s))`);
 } else {
-  console.log(`SUPER_ADMIN kept: ${target} (removed ${removed.deletedCount} other SUPER_ADMIN account(s))`);
+  console.log(`SUPER_ADMIN kept: ${target} (removed ${removed.count} other SUPER_ADMIN account(s))`);
 }
-await mongoose.disconnect();
+await prisma.$disconnect();

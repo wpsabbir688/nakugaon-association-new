@@ -2,9 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import bcrypt from 'bcryptjs';
 import { startTestDb, stopTestDb, makeStaff, makeMember } from './setup.js';
-import { User } from '../../server/src/models/User.js';
-import { AuditLog } from '../../server/src/models/AuditLog.js';
-import { FeeRule } from '../../server/src/models/FeeRule.js';
+import { prisma } from '../../server/src/db/prisma.js';
 let app, agent;
 beforeAll(async () => { app = await startTestDb(); const staff = await makeStaff('SUPER_ADMIN'); agent = request.agent(app); await agent.post('/api/v1/auth/login').send({ email: staff.email, password: 'password123' }).expect(200); }, 600000);
 afterAll(async () => { await stopTestDb(); }, 120000);
@@ -194,7 +192,7 @@ describe('change-password (logged-in user only, own account)', () => {
   const NEW = 'NewPassword123';
   let user, agent;
   beforeAll(async () => {
-    user = await User.create({ name: 'ChangePw Staff', email: 'changepw@test.local', passwordHash: await bcrypt.hash(OLD, 10), role: 'SUPER_ADMIN' });
+    user = await prisma.user.create({ data: { name: 'ChangePw Staff', email: 'changepw@test.local', passwordHash: await bcrypt.hash(OLD, 10), role: 'SUPER_ADMIN' } });
     agent = request.agent(app);
     await agent.post('/api/v1/auth/login').send({ email: user.email, password: OLD }).expect(200);
   });
@@ -217,7 +215,7 @@ describe('change-password (logged-in user only, own account)', () => {
   it('changes the password, writes an audit entry with no password values, and only the new password logs in', async () => {
     const res = await agent.post('/api/v1/auth/change-password').send({ currentPassword: OLD, newPassword: NEW, confirmPassword: NEW }).expect(200);
     expect(res.body.data.passwordChanged).toBe(true);
-    const audit = await AuditLog.findOne({ action: 'PASSWORD_CHANGE', recordId: String(user._id) }).lean();
+    const audit = await prisma.auditLog.findFirst({ where: { action: 'PASSWORD_CHANGE', recordId: String(user.id) } });
     expect(audit).toBeTruthy();
     expect(JSON.stringify(audit)).not.toContain(OLD);
     expect(JSON.stringify(audit)).not.toContain(NEW);

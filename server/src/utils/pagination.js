@@ -4,7 +4,9 @@ export function parsePagination(query) {
   return { page, limit, skip: (page - 1) * limit, search: typeof query.search === 'string' ? query.search.trim() : '' };
 }
 export function pageResponse(items, total, { page, limit }) { return { items, page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) }; }
+// Prisma equivalent of the old Mongo regex search: case-insensitive
+// substring match over the given fields.
 export function searchFilter(search, fields) {
   if (!search) return {};
-  return { $or: fields.map((f) => ({ [f]: { $regex: search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } })) };
+  return { OR: fields.map((f) => ({ [f]: { contains: search, mode: 'insensitive' } })) };
 }

@@ -1,0 +1,404 @@
+// Nakugaon Import & Export Owners Association — PostgreSQL schema (Prisma 6).
+// Migrated 2026-10-25 from the MongoDB/Mongoose data layer, per the user's
+// instruction to use the previous database platform (Neon Postgres) instead
+// of MongoDB Atlas. The API serializes rows as `_id` (see
+// src/db/serialize.js) so the /api/v1 contract is unchanged from the
+// MongoDB implementation and the React client needs no changes.
+//
+// Money is ALWAYS integer Bangladeshi Taka. Never use floats for money.
+// Status / role / kind / method values are plain strings, deliberately
+// matching the values the MongoDB layer used (e.g. member status
+// 'active'/'suspended'/'archived', ledger kind 'opening'/'charge'/'payment'/
+// 'credit'/'unapplied', journal status 'posted'/'reversed'), so no route
+// logic or client code had to change its comparisons.
+//
+// IDs are opaque cuid strings. The old live `nakugaon` Neon database is
+// NEVER pointed at by this schema: DATABASE_URL must name a SEPARATE
+// database created for this project. Transactions require a DIRECT
+// (non-pooled) Postgres URL — pooled URLs reject interactive transactions.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String   @id @default(cuid())
+  name                String
+  email               String   @unique
+  passwordHash        String
+  role                String // SUPER_ADMIN | MANAGER | ACCOUNTANT | OPERATOR | MEMBER
+  memberId            String?
+  member              Member?  @relation(fields: [memberId], references: [id])
+  status              String   @default("active") // active | suspended
+  resetTokenHash      String?
+  resetTokenExpiresAt DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  vehicleEntries     VehicleEntry[]     @relation("EntryCreator")
+  weighbridgeEntries WeighbridgeEntry[] @relation("WbCreator")
+  receivedPayments   Payment[]          @relation("PaymentReceiver")
+  createdExpenses    Expense[]          @relation("ExpenseCreator")
+  approvedExpenses   Expense[]          @relation("ExpenseApprover")
+  createdNotices     Notice[]           @relation("NoticeCreator")
+  createdFeeRules    FeeRule[]          @relation("FeeRuleCreator")
+  uploadedFiles      FileMetadata[]     @relation("FileUploader")
+  idempotencyRecords IdempotencyRecord[]
+
+  @@index([role])
+}
+
+model Member {
+  id              String   @id @default(cuid())
+  memberId        String   @unique // NAK-0001, atomic, never reused
+  fullName        String
+  businessName    String   @default("")
+  phone           String   @default("")
+  email           String   @default("")
+  address         String   @default("")
+  membershipType  String   @default("importer") // importer | exporter | both | other
+  status          String   @default("active") // active | suspended | archived
+  joinedAt        DateTime @default(now())
+  privateNotes    String   @default("")
+  bankDetails     String   @default("")
+  archivedAt      DateTime?
+  archivedReason  String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  users              User[]
+  vehicleEntries     VehicleEntry[]
+  weighbridgeEntries WeighbridgeEntry[]
+  ledgerEntries      LedgerEntry[]
+  payments           Payment[]
+  paymentAllocations PaymentAllocation[]
+  journalEntries     JournalEntry[]
+  files              FileMetadata[]
+
+  @@index([status])
+}
+
+model Counter {
+  key String @id
+  seq Int    @default(0)
+}
+
+model Account {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  type      String // asset | liability | income | expense
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FeeRule {
+  id            String   @id @default(cuid())
+  scope         String // vehicle | weighbridge
+  category      String // weighbridge: bhutan|bangladeshi|lorry-crab|trolley; vehicle: standard
+  amount        Int
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  reason        String   @default("")
+  createdById   String?
+  createdBy     User?    @relation("FeeRuleCreator", fields: [createdById], references: [id])
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  vehicleEntries     VehicleEntry[]
+  weighbridgeEntries WeighbridgeEntry[]
+
+  @@index([scope, category, effectiveFrom])
+}
+
+model VehicleEntry {
+  id             String   @id @default(cuid())
+  memberId       String
+  member         Member   @relation(fields: [memberId], references: [id])
+  quantity       Int
+  vehicleNumber  String   @default("")
+  vehicleCategory String  @default("standard")
+  driverName     String   @default("")
+  feePerVehicle  Int
+  totalCharge    Int
+  feeAmount      Int
+  feeRuleId      String?
+  feeRule        FeeRule? @relation(fields: [feeRuleId], references: [id])
+  amountPaid     Int      @default(0)
+  status         String   @default("posted") // posted | reversed
+  reversalOfId   String?
+  reversalOf     VehicleEntry?  @relation("VehicleReversal", fields: [reversalOfId], references: [id])
+  reversals      VehicleEntry[] @relation("VehicleReversal")
+  reversalReason String   @default("")
+  entryDate      DateTime @default(now())
+  createdById    String?
+  createdBy      User?    @relation("EntryCreator", fields: [createdById], references: [id])
+  notes          String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([memberId, entryDate])
+}
+
+model WeighbridgeEntry {
+  id             String   @id @default(cuid())
+  memberId       String
+  member         Member   @relation(fields: [memberId], references: [id])
+  vehicleNumber  String
+  category       String // bhutan | bangladeshi | lorry-crab | trolley
+  weightKg       Float?
+  feeAmount      Int
+  feeRuleId      String?
+  feeRule        FeeRule? @relation(fields: [feeRuleId], references: [id])
+  amountPaid     Int      @default(0)
+  status         String   @default("posted") // posted | reversed
+  reversalOfId   String?
+  reversalOf     WeighbridgeEntry?  @relation("WbReversal", fields: [reversalOfId], references: [id])
+  reversals      WeighbridgeEntry[] @relation("WbReversal")
+  reversalReason String   @default("")
+  entryDate      DateTime @default(now())
+  createdById    String?
+  createdBy      User?    @relation("WbCreator", fields: [createdById], references: [id])
+  notes          String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([memberId, entryDate])
+  @@index([category])
+}
+
+model Payment {
+  id             String   @id @default(cuid())
+  receiptNo      String   @unique // REC-YYYYMMDD-####
+  memberId       String
+  member         Member   @relation(fields: [memberId], references: [id])
+  amount         Int
+  appliedAmount  Int
+  advanceAmount  Int      @default(0)
+  method         String   @default("cash") // cash | bank | bkash | nagad | other
+  reference      String   @default("")
+  status         String   @default("posted") // posted | reversed
+  reversalOfId   String?
+  reversalOf     Payment?  @relation("PaymentReversal", fields: [reversalOfId], references: [id])
+  reversals      Payment[] @relation("PaymentReversal")
+  reversalReason String   @default("")
+  paymentDate    DateTime @default(now())
+  receivedById   String?
+  receivedBy     User?    @relation("PaymentReceiver", fields: [receivedById], references: [id])
+  notes          String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  allocations PaymentAllocation[]
+}
+
+model PaymentAllocation {
+  id         String   @id @default(cuid())
+  paymentId  String
+  payment    Payment  @relation(fields: [paymentId], references: [id])
+  memberId   String
+  member     Member   @relation(fields: [memberId], references: [id])
+  chargeType String // vehicle | weighbridge
+  chargeId   String // id of the VehicleEntry / WeighbridgeEntry (polymorphic)
+  amount     Int
+  status     String   @default("posted") // posted | reversed
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([paymentId])
+  @@index([chargeType, chargeId])
+}
+
+model LedgerEntry {
+  id          String   @id @default(cuid())
+  memberId    String
+  member      Member   @relation(fields: [memberId], references: [id])
+  kind        String // opening | charge | payment | credit | unapplied
+  sourceType  String // VehicleEntry|WeighbridgeEntry|Payment|OpeningBalance|Credit
+  sourceId    String?
+  debit       Int      @default(0)
+  credit      Int      @default(0)
+  description String   @default("")
+  status      String   @default("posted") // posted | reversed
+  reversalOfId String?
+  reversalOf  LedgerEntry?  @relation("LedgerReversal", fields: [reversalOfId], references: [id])
+  reversals   LedgerEntry[] @relation("LedgerReversal")
+  postedAt    DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([memberId, postedAt])
+  @@index([sourceType, sourceId])
+}
+
+model JournalEntry {
+  id         String   @id @default(cuid())
+  memo       String   @default("")
+  sourceType String
+  sourceId   String?
+  memberId   String?
+  member     Member?  @relation(fields: [memberId], references: [id])
+  status     String   @default("posted") // posted | reversed
+  reversalOfId String?
+  reversalOf JournalEntry?  @relation("JournalReversal", fields: [reversalOfId], references: [id])
+  reversals  JournalEntry[] @relation("JournalReversal")
+  postedAt   DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  lines JournalLine[]
+
+  @@index([sourceType, sourceId])
+  @@index([postedAt])
+}
+
+model JournalLine {
+  id        String       @id @default(cuid())
+  journalId String
+  journal   JournalEntry @relation(fields: [journalId], references: [id])
+  account   String // account code, e.g. 1100
+  debit     Int          @default(0)
+  credit    Int          @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([journalId])
+  @@index([account])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  title       String
+  category    String   @default("general")
+  amount      Int
+  status      String   @default("pending") // pending | approved | rejected | reversed
+  expenseDate DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("ExpenseCreator", fields: [createdById], references: [id])
+  approvedById String?
+  approvedBy  User?    @relation("ExpenseApprover", fields: [approvedById], references: [id])
+  reason      String   @default("")
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, expenseDate])
+}
+
+model Notice {
+  id          String   @id @default(cuid())
+  title       String
+  body        String
+  language    String   @default("bn") // bn | en | both
+  status      String   @default("draft") // draft | published | archived
+  pinned      Boolean  @default(false)
+  publishedAt DateTime?
+  createdById String?
+  createdBy   User?    @relation("NoticeCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, pinned, publishedAt])
+}
+
+model SiteSetting {
+  id                      String   @id @default(cuid())
+  key                     String   @unique @default("site")
+  associationName         String   @default("")
+  associationNameBn       String   @default("")
+  contactPhone            String   @default("")
+  contactEmail            String   @default("")
+  address                 String   @default("")
+  registrationNo          String   @default("")
+  committee               Json     @default("[]")
+  statistics              Json     @default("{}")
+  allowAdvancePayments    Boolean  @default(false)
+  publicBalanceDisclosure Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model Leader {
+  id            String   @id @default(cuid())
+  nameBn        String
+  nameEn        String   @default("")
+  designationBn String
+  designationEn String   @default("")
+  firm          String   @default("")
+  displayOrder  Int      @default(0)
+  mobile        String   @default("")
+  photoUrl      String   @default("")
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([displayOrder])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String   @default("")
+  actorRole  String   @default("")
+  actorEmail String   @default("")
+  action     String
+  recordType String
+  recordId   String   @default("")
+  reason     String   @default("")
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([recordType, recordId, createdAt])
+  @@index([action, createdAt])
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String   @default("")
+  email     String   @default("")
+  message   String
+  status    String   @default("new") // new | read | replied
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model FileMetadata {
+  id           String   @id @default(cuid())
+  memberId     String?
+  member       Member?  @relation(fields: [memberId], references: [id])
+  kind         String // photo | document
+  originalName String
+  storedName   String
+  mimeType     String
+  size         Int
+  uploadedById String?
+  uploadedBy   User?    @relation("FileUploader", fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([memberId])
+}
+
+model IdempotencyRecord {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  endpoint   String
+  key        String
+  response   Json?
+  status     Int      @default(200)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, endpoint, key])
+}

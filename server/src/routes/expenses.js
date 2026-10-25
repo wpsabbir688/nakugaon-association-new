@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { Expense } from '../models/Expense.js';
+import { prisma } from '../db/prisma.js';
+import { ser } from '../db/serialize.js';
 import { requireAuth, requireRole, STAFF, STAFF_NO_OPERATOR } from '../middleware/auth.js';
 import { validate } from '../middleware/validate.js';
 import { ok, notFound, badRequest } from '../errors.js';
@@ -11,23 +12,24 @@ const r = Router(); r.use(requireAuth);
 const schema = z.object({ title: z.string().min(1), category: z.string().optional().default('general'), amount: z.number().int().positive(), notes: z.string().optional().default('') });
 r.get('/', requireRole(...STAFF), async (req, res, next) => {
   try { const { page, limit, skip } = parsePagination(req.query); const filter = {}; if (req.query.status) filter.status = req.query.status;
-    const [items, total] = await Promise.all([Expense.find(filter).sort({ expenseDate: -1 }).skip(skip).limit(limit).lean(), Expense.countDocuments(filter)]); ok(res, pageResponse(items, total, { page, limit })); } catch (e) { next(e); }
+    const [items, total] = await Promise.all([prisma.expense.findMany({ where: filter, orderBy: { expenseDate: 'desc' }, skip, take: limit }), prisma.expense.count({ where: filter })]); ok(res, pageResponse(items.map(ser), total, { page, limit })); } catch (e) { next(e); }
 });
 r.post('/', requireRole(...STAFF), validate(schema), async (req, res, next) => {
-  try { const e = await Expense.create({ ...req.body, createdBy: req.user.id }); await writeAudit({ actor: req.user, action: 'EXPENSE_CREATE', recordType: 'Expense', recordId: String(e._id), after: e.toObject() }); ok(res, e, 201); } catch (err) { next(err); }
+  try { const e = await prisma.expense.create({ data: { ...req.body, createdById: req.user.id } }); await writeAudit({ actor: req.user, action: 'EXPENSE_CREATE', recordType: 'Expense', recordId: String(e.id), after: ser(e) }); ok(res, ser(e), 201); } catch (err) { next(err); }
 });
 r.post('/:id/approve', requireRole(...STAFF_NO_OPERATOR), async (req, res, next) => {
-  try { const e = await Expense.findById(req.params.id); if (!e) throw notFound('Expense not found'); if (e.status !== 'pending') throw badRequest(`Expense is ${e.status}, cannot approve`);
-    await withTransaction(async (session) => { await postJournal({ memo: `Expense: ${e.title}`, sourceType: 'Expense', sourceId: e._id, member: null, lines: [{ account: '5000', debit: e.amount, credit: 0 }, { account: '1000', debit: 0, credit: e.amount }] }, session); e.status = 'approved'; e.approvedBy = req.user.id; await e.save(session ? { session } : {}); });
-    await writeAudit({ actor: req.user, action: 'EXPENSE_APPROVE', recordType: 'Expense', recordId: String(e._id), before: { status: 'pending' }, after: { status: 'approved' } }); ok(res, e); } catch (err) { next(err); }
+  try { const e = await prisma.expense.findUnique({ where: { id: req.params.id } }); if (!e) throw notFound('Expense not found'); if (e.status !== 'pending') throw badRequest(`Expense is ${e.status}, cannot approve`);
+    await withTransaction(async (tx) => { await postJournal({ memo: `Expense: ${e.title}`, sourceType: 'Expense', sourceId: e.id, memberId: null, lines: [{ account: '5000', debit: e.amount, credit: 0 }, { account: '1000', debit: 0, credit: e.amount }] }, tx); await tx.expense.update({ where: { id: e.id }, data: { status: 'approved', approvedById: req.user.id } }); });
+    await writeAudit({ actor: req.user, action: 'EXPENSE_APPROVE', recordType: 'Expense', recordId: String(e.id), before: { status: 'pending' }, after: { status: 'approved' } });
+    const updated = await prisma.expense.findUnique({ where: { id: e.id } }); ok(res, ser(updated)); } catch (err) { next(err); }
 });
 r.post('/:id/reject', requireRole(...STAFF_NO_OPERATOR), validate(z.object({ reason: z.string().optional().default('') })), async (req, res, next) => {
-  try { const e = await Expense.findById(req.params.id); if (!e) throw notFound('Expense not found'); if (e.status !== 'pending') throw badRequest('Only pending expenses can be rejected'); e.status = 'rejected'; e.reason = req.body.reason; await e.save(); await writeAudit({ actor: req.user, action: 'EXPENSE_REJECT', recordType: 'Expense', recordId: String(e._id), reason: req.body.reason }); ok(res, e); } catch (err) { next(err); }
+  try { const e = await prisma.expense.findUnique({ where: { id: req.params.id } }); if (!e) throw notFound('Expense not found'); if (e.status !== 'pending') throw badRequest('Only pending expenses can be rejected'); const updated = await prisma.expense.update({ where: { id: e.id }, data: { status: 'rejected', reason: req.body.reason } }); await writeAudit({ actor: req.user, action: 'EXPENSE_REJECT', recordType: 'Expense', recordId: String(e.id), reason: req.body.reason }); ok(res, ser(updated)); } catch (err) { next(err); }
 });
 r.post('/:id/reverse', requireRole(...STAFF_NO_OPERATOR), validate(z.object({ reason: z.string().min(1) })), async (req, res, next) => {
-  try { const e = await Expense.findById(req.params.id); if (!e) throw notFound('Expense not found'); if (e.status !== 'approved') throw badRequest('Only approved expenses can be reversed');
-    const { JournalEntry } = await import('../models/JournalEntry.js'); const { JournalLine } = await import('../models/JournalLine.js');
-    await withTransaction(async (session) => { const j = await JournalEntry.findOne({ sourceType: 'Expense', sourceId: e._id, status: 'posted' }, null, session ? { session } : {}); if (j) { const lines = await JournalLine.find({ journal: j._id }, null, session ? { session } : {}); const [rev] = await JournalEntry.create([{ memo: `Reversal: ${req.body.reason}`, sourceType: 'Expense', sourceId: e._id, status: 'posted', reversalOf: j._id }], session ? { session } : {}); await JournalLine.insertMany(lines.map((l) => ({ journal: rev._id, account: l.account, debit: l.credit, credit: l.debit })), session ? { session } : {}); await JournalEntry.updateOne({ _id: j._id }, { $set: { status: 'reversed' } }, session ? { session } : {}); } e.status = 'reversed'; e.reason = req.body.reason; await e.save(session ? { session } : {}); });
-    await writeAudit({ actor: req.user, action: 'EXPENSE_REVERSE', recordType: 'Expense', recordId: String(e._id), reason: req.body.reason }); ok(res, e); } catch (err) { next(err); }
+  try { const e = await prisma.expense.findUnique({ where: { id: req.params.id } }); if (!e) throw notFound('Expense not found'); if (e.status !== 'approved') throw badRequest('Only approved expenses can be reversed');
+    await withTransaction(async (tx) => { const j = await tx.journalEntry.findFirst({ where: { sourceType: 'Expense', sourceId: e.id, status: 'posted' } }); if (j) { const lines = await tx.journalLine.findMany({ where: { journalId: j.id } }); const rev = await tx.journalEntry.create({ data: { memo: `Reversal: ${req.body.reason}`, sourceType: 'Expense', sourceId: e.id, status: 'posted', reversalOfId: j.id } }); await tx.journalLine.createMany({ data: lines.map((l) => ({ journalId: rev.id, account: l.account, debit: l.credit, credit: l.debit })) }); await tx.journalEntry.update({ where: { id: j.id }, data: { status: 'reversed' } }); } await tx.expense.update({ where: { id: e.id }, data: { status: 'reversed', reason: req.body.reason } }); });
+    await writeAudit({ actor: req.user, action: 'EXPENSE_REVERSE', recordType: 'Expense', recordId: String(e.id), reason: req.body.reason });
+    const updated = await prisma.expense.findUnique({ where: { id: e.id } }); ok(res, ser(updated)); } catch (err) { next(err); }
 });
 export default r;
