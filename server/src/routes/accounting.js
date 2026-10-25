@@ -19,10 +19,12 @@ r.get('/accounts', async (req, res, next) => {
   try {
     const sums = await JournalLine.aggregate([{ $group: { _id: '$account', debit: { $sum: '$debit' }, credit: { $sum: '$credit' } } }]);
     const docs = await Account.find({}).lean();
-    const byCode = {}; for (const d of docs) byCode[d.code] = d;
-    const rows = sums.map((g) => ({ code: g._id, name: byCode[g._id]?.name || g._id, type: byCode[g._id]?.type || null, debit: g.debit, credit: g.credit, balance: g.debit - g.credit }));
-    // Accounts with no transactions are NOT invented here: only codes that
-    // actually appear in JournalLine are returned (empty when none exist).
+    // Union of Account docs and journal-line codes: a doc with no journals
+    // shows true 0/0/0 sums (not an invented balance); a journal code with
+    // no doc falls back to the code as its name. With neither, this is empty.
+    const byCode = {}; for (const d of docs) byCode[d.code] = { code: d.code, name: d.name, type: d.type, debit: 0, credit: 0, balance: 0 };
+    for (const g of sums) { const row = byCode[g._id] || (byCode[g._id] = { code: g._id, name: g._id, type: null, debit: 0, credit: 0, balance: 0 }); row.debit = g.debit; row.credit = g.credit; row.balance = g.debit - g.credit; }
+    const rows = Object.values(byCode);
     rows.sort((a, b) => String(a.code).localeCompare(String(b.code)));
     ok(res, { items: rows, total: rows.length }); } catch (e) { next(e); }
 });

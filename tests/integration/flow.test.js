@@ -19,9 +19,13 @@ describe('AI Studio sections: leaders, accounts, audit log, future-only fees, se
     await a.post('/api/v1/auth/login').send({ email: u.email, password: 'password123' }).expect(200);
     operatorAgent = a; return a;
   }
-  it('accounts endpoint is empty with no transactions', async () => {
+  it('accounts endpoint shows only zero balances with no transactions', async () => {
     const r = await agent.get('/api/v1/accounting/accounts').expect(200);
-    expect(r.body.data.items).toEqual([]); expect(r.body.data.total).toBe(0);
+    // Bootstrap seeds the 6 chart accounts; with no journals yet every
+    // balance must be exactly 0 — no invented amounts.
+    expect(r.body.data.items.length).toBeGreaterThan(0);
+    expect(r.body.data.items.every((x) => x.debit === 0 && x.credit === 0 && x.balance === 0)).toBe(true);
+    expect(r.body.data.total).toBe(r.body.data.items.length);
   });
   it('accounts endpoint sums journal lines after a posted charge', async () => {
     const m = await makeMember();
