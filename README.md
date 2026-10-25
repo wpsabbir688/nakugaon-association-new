@@ -1,7 +1,12 @@
 # Nakugaon Import & Export Owners Association — NEW BUILD
 
 Fresh rebuild from scratch per the Ultimate A–Z Master Prompt (Phases 1–30).
-This is a **local-only** project. It is **not pushed, not deployed, and not live**.
+
+🌐 **Live demo (frontend only):** https://nakugaon-association-new.netlify.app
+— GitHub: https://github.com/wpsabbir688/nakugaon-association-new
+— Backend API + MongoDB are **not live yet**, so login/member/payment features
+show loading/error/empty states until a backend is deployed. Do not present
+the frontend alone as the full working system.
 The previous project (`~/workspace/nakugaon-association/`, live on Netlify/Render/Neon)
 is kept untouched as backup until this build is verified and a cutover is
 explicitly confirmed. Do not delete the old project, its repo, or its live DB.
