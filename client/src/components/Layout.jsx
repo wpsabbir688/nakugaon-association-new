@@ -45,7 +45,7 @@ export function StaffLayout() {
     ['/dashboard', t.dashboard, LayoutDashboard], ['/admin/members', t.members, Users], ['/admin/vehicle-entries', t.vehicleEntries, Truck],
     ['/admin/weighbridge', t.weighbridge, Scale], ['/admin/payments', t.payments, Wallet], ['/admin/expenses', t.expenses, Receipt],
     ['/admin/fees', t.fees, Settings], ['/admin/notices', t.noticesManage, Bell], ['/admin/reports', t.reports, FileText],
-    ['/admin/settings', t.settings, Settings], ['/admin/audit', t.auditLog, FileText],
+    ['/admin/settings', t.settings, Settings], ['/admin/change-password', t.changePassword, User], ['/admin/audit', t.auditLog, FileText],
   ]
   const sidebar = <nav aria-label="Staff" className="space-y-1">
     {items.map(([p, label, Icon]) => <NavLink key={p} to={L(lang, p)} onClick={() => setOpen(false)} className={({ isActive }) => `flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500 ${isActive ? 'bg-teal-50 text-teal-800 ring-1 ring-teal-200' : 'text-slate-700'}`}><Icon size={18} />{label}</NavLink>)}

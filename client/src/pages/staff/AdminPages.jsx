@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { useApp } from '../../context/AppContext'
 import { apiSend, apiErrorMessage } from '../../lib/api'
@@ -48,6 +50,32 @@ export function SettingsPage() {
       <Field label={t.missionTitle}><textarea rows={4} {...register('mission')} className={inputCls} /></Field>
       <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" {...register('disclosureEnabled')} className="h-5 w-5 accent-teal-700" /> Public balance disclosure enabled (only if the association approves)</label>
       <button disabled={isSubmitting} className={btnPrimary}>{t.save}</button>
+    </form></Card></div>
+}
+export function ChangePasswordPage() {
+  const { t, lang, showToast, logout } = useApp(); const navigate = useNavigate()
+  const { register, handleSubmit, reset, setError, formState: { isSubmitting, errors } } = useForm()
+  const save = async (v) => {
+    const schema = z.object({
+      currentPassword: z.string().min(1, t.required),
+      newPassword: z.string().min(8, t.passwordTooShort).max(128),
+      confirmPassword: z.string().min(8).max(128),
+    }).refine(d => d.confirmPassword === d.newPassword, { message: t.passwordsDoNotMatch, path: ['confirmPassword'] })
+      .refine(d => d.newPassword !== d.currentPassword, { message: t.passwordSameAsCurrent, path: ['newPassword'] })
+    const parsed = schema.safeParse(v)
+    if (!parsed.success) { parsed.error.issues.forEach(i => setError(i.path[0], { message: i.message })); return }
+    try {
+      await apiSend('post', '/v1/auth/change-password', parsed.data)
+      showToast(t.passwordChanged); reset()
+      await logout(); navigate(`/${lang}/login`)
+    } catch (e) { showToast(apiErrorMessage(e, t.passwordChangeFailed)) }
+  }
+  return <div className="mx-auto max-w-2xl"><Card><h1 className="text-2xl font-bold">{t.changePassword}</h1><p className="mt-1 text-sm text-slate-500">{t.passwordChangeNote}</p>
+    <form onSubmit={handleSubmit(save)} className="mt-4 space-y-4">
+      <Field label={t.currentPassword} error={errors.currentPassword?.message}><input type="password" autoComplete="current-password" {...register('currentPassword', { required: t.required })} className={inputCls} /></Field>
+      <Field label={t.newPassword} error={errors.newPassword?.message}><input type="password" autoComplete="new-password" {...register('newPassword', { required: t.required })} className={inputCls} /></Field>
+      <Field label={t.confirmNewPassword} error={errors.confirmPassword?.message}><input type="password" autoComplete="new-password" {...register('confirmPassword', { required: t.required })} className={inputCls} /></Field>
+      <button disabled={isSubmitting} className={btnPrimary}>{t.changePassword}</button>
     </form></Card></div>
 }
 export function AuditPage() {

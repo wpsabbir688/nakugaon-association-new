@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
+import bcrypt from 'bcryptjs';
 import { startTestDb, stopTestDb, makeStaff, makeMember } from './setup.js';
+import { User } from '../../server/src/models/User.js';
+import { AuditLog } from '../../server/src/models/AuditLog.js';
 import { FeeRule } from '../../server/src/models/FeeRule.js';
 let app, agent;
 beforeAll(async () => { app = await startTestDb(); const staff = await makeStaff('SUPER_ADMIN'); agent = request.agent(app); await agent.post('/api/v1/auth/login').send({ email: staff.email, password: 'password123' }).expect(200); }, 600000);
@@ -97,5 +100,43 @@ describe('end-to-end member -> charge -> payment -> statement', () => {
   });
   it('unauthenticated staff endpoints are rejected', async () => {
     await request(app).get('/api/v1/members').expect(401);
+  });
+});
+
+describe('change-password (logged-in user only, own account)', () => {
+  // Test fixture account only — not a real user credential.
+  const OLD = 'OldPassword123';
+  const NEW = 'NewPassword123';
+  let user, agent;
+  beforeAll(async () => {
+    user = await User.create({ name: 'ChangePw Staff', email: 'changepw@test.local', passwordHash: await bcrypt.hash(OLD, 10), role: 'SUPER_ADMIN' });
+    agent = request.agent(app);
+    await agent.post('/api/v1/auth/login').send({ email: user.email, password: OLD }).expect(200);
+  });
+  it('rejects unauthenticated requests', async () => {
+    await request(app).post('/api/v1/auth/change-password').send({ currentPassword: OLD, newPassword: NEW, confirmPassword: NEW }).expect(401);
+  });
+  it('rejects a wrong current password and keeps the old password working', async () => {
+    await agent.post('/api/v1/auth/change-password').send({ currentPassword: 'WrongPassword123', newPassword: NEW, confirmPassword: NEW }).expect(401);
+    await request(app).post('/api/v1/auth/login').send({ email: user.email, password: OLD }).expect(200);
+  });
+  it('rejects a short new password', async () => {
+    await agent.post('/api/v1/auth/change-password').send({ currentPassword: OLD, newPassword: 'short', confirmPassword: 'short' }).expect(400);
+  });
+  it('rejects a new password identical to the current password', async () => {
+    await agent.post('/api/v1/auth/change-password').send({ currentPassword: OLD, newPassword: OLD, confirmPassword: OLD }).expect(400);
+  });
+  it('rejects a mismatched confirmation', async () => {
+    await agent.post('/api/v1/auth/change-password').send({ currentPassword: OLD, newPassword: NEW, confirmPassword: 'Different123' }).expect(400);
+  });
+  it('changes the password, writes an audit entry with no password values, and only the new password logs in', async () => {
+    const res = await agent.post('/api/v1/auth/change-password').send({ currentPassword: OLD, newPassword: NEW, confirmPassword: NEW }).expect(200);
+    expect(res.body.data.passwordChanged).toBe(true);
+    const audit = await AuditLog.findOne({ action: 'PASSWORD_CHANGE', recordId: String(user._id) }).lean();
+    expect(audit).toBeTruthy();
+    expect(JSON.stringify(audit)).not.toContain(OLD);
+    expect(JSON.stringify(audit)).not.toContain(NEW);
+    await request(app).post('/api/v1/auth/login').send({ email: user.email, password: OLD }).expect(401);
+    await request(app).post('/api/v1/auth/login').send({ email: user.email, password: NEW }).expect(200);
   });
 });

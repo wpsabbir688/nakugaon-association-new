@@ -22,6 +22,33 @@ r.post('/login', authLimiter, validate(loginSchema), async (req, res, next) => {
   } catch (e) { next(e); }
 });
 r.post('/logout', (req, res) => { res.clearCookie(COOKIE_NAME, { path: '/' }); ok(res, { loggedOut: true }); });
+// Change the LOGGED-IN user's own password only. There is no user-id parameter,
+// so one account can never change another account's password through this route.
+// Session limitation (documented, not faked): auth tokens are stateless JWTs with
+// no token version / revocation list, so tokens issued before the change stay
+// valid until they expire. This route clears the caller's cookie and the client
+// clears its session and redirects to login; other devices/sessions are NOT
+// invalidated. Any outstanding reset token is also cleared.
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8).max(128),
+  confirmPassword: z.string().min(8).max(128).optional(),
+}).refine((d) => !d.confirmPassword || d.confirmPassword === d.newPassword, { message: 'New passwords do not match', path: ['confirmPassword'] });
+r.post('/change-password', requireAuth, authLimiter, validate(changePasswordSchema), async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id).select('+passwordHash');
+    if (!user || user.status !== 'active') throw unauthorized('Account is not active');
+    if (!(await bcrypt.compare(req.body.currentPassword, user.passwordHash))) throw unauthorized('Current password is incorrect');
+    if (req.body.newPassword === req.body.currentPassword) throw badRequest('New password must be different from the current password');
+    user.passwordHash = await bcrypt.hash(req.body.newPassword, 12);
+    user.resetTokenHash = null; user.resetTokenExpiresAt = null;
+    await user.save();
+    // Audit entry carries actor/action/timestamp only — never any password value.
+    await writeAudit({ actor: req.user, action: 'PASSWORD_CHANGE', recordType: 'User', recordId: String(user._id), after: { passwordChanged: true } });
+    res.clearCookie(COOKIE_NAME, { path: '/' });
+    ok(res, { passwordChanged: true });
+  } catch (e) { next(e); }
+});
 r.get('/me', requireAuth, async (req, res) => { ok(res, req.user); });
 r.post('/forgot-password', authLimiter, validate(z.object({ email: z.string().email() })), async (req, res, next) => {
   try {

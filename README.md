@@ -53,6 +53,12 @@ explicitly confirmed. Do not delete the old project, its repo, or its live DB.
 - No fake members, payments, or balances are seeded. Test fixtures are separate
   from production initialisation.
 - Password reset is LOG-ONLY until SMTP is configured (the API says so honestly).
+- Change password (local, not yet deployed): `POST /api/v1/auth/change-password`
+  (authenticated, logged-in user's own account only) + staff sidebar
+  "Change Password" page (`/:lang/admin/change-password`). Auth tokens are
+  stateless JWTs, so tokens issued before a change stay valid until expiry —
+  the client clears its session and redirects to login on success; other
+  devices are NOT invalidated. See the route comment in `server/src/routes/auth.js`.
 - Seed admin only via `npm run seed:admin` with `ADMIN_EMAIL`/`ADMIN_PASSWORD`
   env vars. There is no universal default password in code.
 
