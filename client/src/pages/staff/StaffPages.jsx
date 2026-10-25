@@ -15,16 +15,23 @@ export function PeriodFilter({ value, onChange, t }) {
   return <div className="flex flex-wrap gap-2" role="group" aria-label={t.filter}>{opts.map(([v, l]) => <button key={v} onClick={() => onChange(v)} className={`rounded-full px-4 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500 ${value === v ? 'bg-teal-700 text-white' : 'border border-slate-300 bg-white'}`}>{l}</button>)}</div>
 }
 export function Dashboard() {
-  const { t } = useApp(); const [period, setPeriod] = useState('today')
+  const { t, lang } = useApp(); const [period, setPeriod] = useState('today')
   const summary = useApi('/v1/dashboard/summary', { period })
   const charts = useApi('/v1/dashboard/charts', { period })
+  const recentVehicles = useApi('/v1/vehicle-entries', { limit: 5 })
+  const recentPayments = useApi('/v1/payments', { limit: 5 })
   const d = summary.data || {}
   const cards = [
     [t.vehicleEntries, d.vehicleEntriesCount ?? d.vehicleEntries], [t.weighbridge, d.weighbridgeCount ?? d.weighbridge],
     [t.payments, d.totalPayments != null ? formatBDT(d.totalPayments) : d.payments], [t.expenses, d.totalExpenses != null ? formatBDT(d.totalExpenses) : d.expenses],
     [t.outstanding, d.outstanding != null ? formatBDT(d.outstanding) : d.totalOutstanding], [t.members, d.activeMembers ?? d.members],
   ]
-  const chartData = Array.isArray(charts.data) ? charts.data : (charts.data?.series || charts.data?.data || [])
+  // API returns daily arrays (vehicleDaily/weighbridgeDaily/paymentDaily), NOT a
+  // series array — merge them by date into one series for the chart.
+  const chartData = (() => { const c = charts.data || {}; const byDate = {}
+    for (const [arr, key] of [[c.vehicleDaily, 'vehicle'], [c.weighbridgeDaily, 'weighbridge'], [c.paymentDaily, 'payments']])
+      for (const row of (arr || [])) { const d = row._id; byDate[d] = byDate[d] || { date: d, vehicle: 0, weighbridge: 0, payments: 0 }; byDate[d][key] = row.total ?? 0 }
+    return Object.values(byDate).sort((a, b) => String(a.date).localeCompare(String(b.date))) })()
   return <div className="space-y-5"><h1 className="text-3xl font-bold">{t.dashboard}</h1><p className="text-slate-600">{t.dashboardSub}</p>
     <PeriodFilter value={period} onChange={setPeriod} t={t} />
     {summary.loading ? <div className="grid gap-4 sm:grid-cols-3"><Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" /></div>
@@ -32,8 +39,18 @@ export function Dashboard() {
     : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{cards.map(([label, val]) => <Card key={label}><p className="text-sm text-slate-500">{label}</p><p className="mt-1 text-2xl font-bold text-navy">{val ?? '—'}</p></Card>)}</div>}
     <Card><h2 className="font-bold">{t.charts}</h2>
       {charts.loading ? <Skeleton className="mt-3 h-64" /> : charts.error ? <ErrorState error={charts.error} onRetry={charts.refresh} /> :
-      chartData.length ? <div className="mt-3 h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip formatter={(v) => typeof v === 'number' ? formatBDT(v) : v} /><Bar dataKey="value" fill="#0f766e" /></BarChart></ResponsiveContainer></div> : <div className="mt-3"><EmptyState /></div>}
+      chartData.length ? <div className="mt-3 h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" /><YAxis /><Tooltip formatter={(v) => typeof v === 'number' ? formatBDT(v) : v} /><Bar dataKey="vehicle" fill="#0f766e" /><Bar dataKey="weighbridge" fill="#0ea5e9" /><Bar dataKey="payments" fill="#f59e0b" /></BarChart></ResponsiveContainer></div> : <div className="mt-3"><EmptyState /></div>}
     </Card>
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card><div className="flex justify-between"><h2 className="font-bold">{t.recentVehicleEntries}</h2><Link to={`/${lang}/admin/vehicle-entries`} className="font-semibold text-teal-700">{t.viewAll}</Link></div>
+        {recentVehicles.loading ? <Skeleton className="mt-3 h-24" /> : recentVehicles.error ? <ErrorState error={recentVehicles.error} onRetry={recentVehicles.refresh} /> :
+        (recentVehicles.data?.items || []).length ? <ul className="mt-3 space-y-2 text-sm">{(recentVehicles.data.items || []).map(r => <li key={r._id} className="flex justify-between border-b py-1"><span>{formatDate(r.entryDate || r.createdAt)} — {r.member ? `${r.member.memberId} — ${r.member.fullName || ''}` : ''} × {r.quantity ?? ''}</span><strong>{formatBDT(r.totalCharge ?? r.feeAmount ?? 0)}</strong></li>)}</ul> : <div className="mt-3"><EmptyState /></div>}
+      </Card>
+      <Card><div className="flex justify-between"><h2 className="font-bold">{t.recentReceipts}</h2><Link to={`/${lang}/admin/payments`} className="font-semibold text-teal-700">{t.viewAll}</Link></div>
+        {recentPayments.loading ? <Skeleton className="mt-3 h-24" /> : recentPayments.error ? <ErrorState error={recentPayments.error} onRetry={recentPayments.refresh} /> :
+        (recentPayments.data?.items || []).length ? <ul className="mt-3 space-y-2 text-sm">{(recentPayments.data.items || []).map(r => <li key={r._id} className="flex justify-between border-b py-1"><span>{formatDate(r.paymentDate || r.createdAt)} — {r.member ? `${r.member.memberId} — ${r.member.fullName || ''}` : ''} {r.receiptNo || ''}</span><strong>{formatBDT(r.amount ?? 0)}</strong></li>)}</ul> : <div className="mt-3"><EmptyState /></div>}
+      </Card>
+    </div>
     <Card><h2 className="font-bold">{t.ledger} / {t.reconciliation}</h2><LedgerBlock /></Card>
   </div>
 }

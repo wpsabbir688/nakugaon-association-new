@@ -7,6 +7,7 @@ import { VehicleEntry } from '../models/VehicleEntry.js';
 import { WeighbridgeEntry } from '../models/WeighbridgeEntry.js';
 import { Payment } from '../models/Payment.js';
 import { Expense } from '../models/Expense.js';
+import { Account } from '../models/Account.js';
 import { requireAuth, requireRole, STAFF } from '../middleware/auth.js';
 import { ok } from '../errors.js';
 import { parsePagination, pageResponse } from '../utils/pagination.js';
@@ -14,6 +15,17 @@ import { resolveMember } from './helpers.js';
 import { computeOutstanding } from '../services/accounting.js';
 import { dateRange } from './helpers.js';
 const r = Router(); r.use(requireAuth, requireRole(...STAFF));
+r.get('/accounts', async (req, res, next) => {
+  try {
+    const sums = await JournalLine.aggregate([{ $group: { _id: '$account', debit: { $sum: '$debit' }, credit: { $sum: '$credit' } } }]);
+    const docs = await Account.find({}).lean();
+    const byCode = {}; for (const d of docs) byCode[d.code] = d;
+    const rows = sums.map((g) => ({ code: g._id, name: byCode[g._id]?.name || g._id, type: byCode[g._id]?.type || null, debit: g.debit, credit: g.credit, balance: g.debit - g.credit }));
+    // Accounts with no transactions are NOT invented here: only codes that
+    // actually appear in JournalLine are returned (empty when none exist).
+    rows.sort((a, b) => String(a.code).localeCompare(String(b.code)));
+    ok(res, { items: rows, total: rows.length }); } catch (e) { next(e); }
+});
 r.get('/ledger', async (req, res, next) => {
   try { const { page, limit, skip } = parsePagination(req.query); const filter = {}; if (req.query.memberId) { const m = await resolveMember(req.query.memberId); filter.member = m._id; } if (req.query.kind) filter.kind = req.query.kind;
     const [items, total] = await Promise.all([LedgerEntry.find(filter).sort({ postedAt: -1 }).skip(skip).limit(limit).populate('member', 'memberId fullName').lean(), LedgerEntry.countDocuments(filter)]); ok(res, pageResponse(items, total, { page, limit })); } catch (e) { next(e); }

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Member } from '../models/Member.js';
 import { Notice } from '../models/Notice.js';
 import { ContactMessage } from '../models/ContactMessage.js';
+import { Leader } from '../models/Leader.js';
 import { validate } from '../middleware/validate.js';
 import { contactLimiter } from '../middleware/rateLimit.js';
 import { ok, notFound } from '../errors.js';
@@ -21,6 +22,11 @@ r.get('/members', async (req, res, next) => {
 });
 r.get('/members/:memberId', async (req, res, next) => {
   try { const m = await resolveMember(req.params.memberId); if (m.status !== 'active') throw notFound('Member not found'); const settings = await getSettings(); const p = publicMemberProjection(m); if (settings.publicBalanceDisclosure) { const t = await memberOutstanding(m._id); p.outstanding = t.outstanding; } ok(res, p); } catch (e) { next(e); }
+});
+// Public leaders: active leaders only, approved fields only — NEVER mobile.
+r.get('/leaders', async (req, res, next) => {
+  try { const { page, limit, skip } = parsePagination(req.query);
+    const [items, total] = await Promise.all([Leader.find({ active: true }).sort({ displayOrder: 1, createdAt: 1 }).skip(skip).limit(limit).select('_id nameBn nameEn designationBn designationEn firm displayOrder photoUrl active').lean(), Leader.countDocuments({ active: true })]); ok(res, pageResponse(items, total, { page, limit })); } catch (e) { next(e); }
 });
 r.get('/notices', async (req, res, next) => {
   try { const { page, limit, skip } = parsePagination(req.query); const filter = { status: 'published' };

@@ -61,6 +61,11 @@ explicitly confirmed. Do not delete the old project, its repo, or its live DB.
   devices are NOT invalidated. See the route comment in `server/src/routes/auth.js`.
 - Seed admin only via `npm run seed:admin` with `ADMIN_EMAIL`/`ADMIN_PASSWORD`
   env vars. There is no universal default password in code.
+- Admin replacement at deployment: `npm run replace:admin` with the same
+  `ADMIN_EMAIL`/`ADMIN_PASSWORD` (+ optional `ADMIN_NAME`) host env vars
+  deletes every other SUPER_ADMIN account and creates/promotes only that
+  one. No defaults, no password in the repo; run it only as an explicit
+  deployment step against the deployment database, never automatically.
 
 ## Run locally (dev)
 

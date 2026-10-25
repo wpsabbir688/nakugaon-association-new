@@ -97,16 +97,34 @@ export function Expenses() {
     columns={[{ key: 'date', label: t.date, render: r => formatDate(r.date || r.createdAt) }, { key: 'title', label: t.subject }, { key: 'amount', label: t.amount, render: r => formatBDT(r.amount ?? 0) }, { key: 'category', label: 'Category' }]} />
 }
 export function Fees() {
-  const { t, showToast } = useApp(); const q = useApi('/v1/fee-rules'); const [showForm, setShowForm] = useState(false)
+  const { t, showToast } = useApp(); const q = useApi('/v1/fee-rules'); const [showForm, setShowForm] = useState(false); const [changeRule, setChangeRule] = useState(null)
   const { register, handleSubmit, reset, formState: { isSubmitting } } = useForm()
+  const { register: regChange, handleSubmit: submitChange, reset: resetChange, formState: { isSubmitting: changing } } = useForm()
   const rows = Array.isArray(q.data) ? q.data : (q.data?.items || q.data?.rules || [])
-  const { ask, dialog } = useConfirm()
-  const save = async (v) => { try { await apiSend('post', '/v1/fee-rules', { ...v, amount: Math.round(Number(v.amount)) }); showToast(t.save); reset(); setShowForm(false); q.refresh() } catch (e) { showToast(apiErrorMessage(e, 'Save failed')) } }
-  const update = async (r) => { const ok = await ask({ title: t.fees, text: `${r.name || r.type} — ${formatBDT(r.amount ?? 0)}` }); if (!ok) return; showToast('Fee change requires confirmation in the form below — edit via the server record.'); }
+  const today = new Date().toISOString().slice(0, 10)
+  const save = async (v) => { try { await apiSend('post', '/v1/fee-rules', { scope: v.scope, category: v.category, amount: Math.round(Number(v.amount)), effectiveFrom: new Date(v.effectiveFrom).toISOString(), reason: v.reason || '' }); showToast(t.save); reset(); setShowForm(false); q.refresh() } catch (e) { showToast(apiErrorMessage(e, 'Save failed')) } }
+  // Future-only change: close the old rule on the new effective date, then
+  // create a new rule. Past entries keep their stored fee snapshots.
+  const changeRate = async (v) => {
+    const amount = Math.round(Number(v.amount)); const eff = new Date(v.effectiveFrom)
+    if (!Number.isInteger(amount) || amount < 0 || Number.isNaN(eff.getTime())) { showToast(t.required); return }
+    const effIso = eff.toISOString()
+    try { await apiSend('patch', `/v1/fee-rules/${changeRule._id || changeRule.id}`, { effectiveTo: effIso }) }
+    catch (e) { showToast(apiErrorMessage(e, 'Save failed')); return }
+    try { await apiSend('post', '/v1/fee-rules', { scope: changeRule.scope, category: changeRule.category, amount, effectiveFrom: effIso, reason: v.reason || '' }); showToast(t.save); setChangeRule(null); q.refresh() }
+    catch (e) { showToast(`${apiErrorMessage(e, 'Save failed')} — the old rule was already closed to ${v.effectiveFrom}; no new rule was created.`) }
+  }
   return <div className="space-y-4"><div className="flex justify-between"><h1 className="text-3xl font-bold">{t.fees}</h1><button onClick={() => setShowForm(!showForm)} className={btnPrimary}>{t.newFee}</button></div>
-    <Card><p className="text-sm text-slate-600">{t.feeNote}</p></Card>
-    {showForm && <Card><form onSubmit={handleSubmit(save)} className="grid gap-4 sm:grid-cols-3"><Field label="Name"><input {...register('name', { required: true })} className={inputCls} /></Field><Field label={t.amount}><input type="number" step="1" {...register('amount', { required: true })} className={inputCls} /></Field><Field label="Type"><input {...register('type')} className={inputCls} /></Field><div><button disabled={isSubmitting} className={btnPrimary}>{t.save}</button></div></form></Card>}
+    <Card><p className="text-sm text-slate-600">{t.feeNote}</p><p className="mt-2 text-sm text-slate-600">{t.feeFutureNote}</p></Card>
+    {showForm && <Card><form onSubmit={handleSubmit(save)} className="grid gap-4 sm:grid-cols-2"><Field label="Scope"><select {...register('scope', { required: true })} className={inputCls}><option value="vehicle">vehicle</option><option value="weighbridge">weighbridge</option></select></Field><Field label="Category"><input {...register('category', { required: true })} className={inputCls} /></Field><Field label={t.amount}><input type="number" step="1" {...register('amount', { required: true })} className={inputCls} /></Field><Field label={t.effectiveFrom}><input type="date" defaultValue={today} {...register('effectiveFrom', { required: true })} className={inputCls} /></Field><div className="sm:col-span-2"><button disabled={isSubmitting} className={btnPrimary}>{t.save}</button></div></form></Card>}
+    {changeRule && <Card><h2 className="font-bold">{t.changeRate} — {changeRule.scope}/{changeRule.category} ({formatBDT(changeRule.amount ?? 0)})</h2>
+      <form onSubmit={submitChange(changeRate)} className="mt-3 grid gap-4 sm:grid-cols-3">
+        <Field label={t.newAmount}><input type="number" step="1" {...regChange('amount', { required: true })} className={inputCls} /></Field>
+        <Field label={t.effectiveFrom}><input type="date" defaultValue={today} {...regChange('effectiveFrom', { required: true })} className={inputCls} /></Field>
+        <Field label={t.message}><input {...regChange('reason')} className={inputCls} /></Field>
+        <div className="sm:col-span-3 flex gap-2"><button disabled={changing} className={btnPrimary}>{t.save}</button><button type="button" onClick={() => setChangeRule(null)} className={btnGhost}>{t.cancel}</button></div>
+      </form></Card>}
     {q.loading ? <Skeleton className="h-32" /> : q.error ? <ErrorState error={q.error} onRetry={q.refresh} /> :
-    <DataTable columns={[{ key: 'name', label: 'Name' }, { key: 'type', label: 'Type' }, { key: 'amount', label: t.amount, render: r => formatBDT(r.amount ?? 0) }, { key: 'actions', label: t.actions, render: r => <button onClick={() => update(r)} className="font-semibold text-teal-700">{t.edit}</button> }]} rows={rows} />}{dialog}
+    <DataTable columns={[{ key: 'scope', label: 'Scope' }, { key: 'category', label: 'Category' }, { key: 'amount', label: t.amount, render: r => formatBDT(r.amount ?? 0) }, { key: 'effectiveFrom', label: t.effectiveFrom, render: r => formatDate(r.effectiveFrom) }, { key: 'effectiveTo', label: 'Effective to', render: r => r.effectiveTo ? formatDate(r.effectiveTo) : '—' }, { key: 'actions', label: t.actions, render: r => <button onClick={() => { setChangeRule(r); resetChange({ amount: r.amount, effectiveFrom: today, reason: '' }) }} className="font-semibold text-teal-700">{t.changeRate}</button> }]} rows={rows} />}
   </div>
 }

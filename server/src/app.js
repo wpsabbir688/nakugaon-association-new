@@ -18,6 +18,7 @@ import dashboardRoutes from './routes/dashboard.js';
 import noticesRoutes from './routes/notices.js';
 import settingsRoutes from './routes/settings.js';
 import uploadsRoutes from './routes/uploads.js';
+import leadersRoutes from './routes/leaders.js';
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
@@ -40,6 +41,7 @@ export function createApp() {
   app.use('/api/v1/notices', noticesRoutes);
   app.use('/api/v1/settings', settingsRoutes);
   app.use('/api/v1/uploads', uploadsRoutes);
+  app.use('/api/v1/leaders', leadersRoutes);
   app.use((req, res) => res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Route not found' } }));
   app.use(errorHandler);
   return app;

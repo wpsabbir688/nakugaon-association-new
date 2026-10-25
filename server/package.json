@@ -11,7 +11,8 @@
     "seed:admin": "node src/scripts/seed-admin.js",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "lint": "eslint src tests || true"
+    "lint": "eslint src tests || true",
+    "replace:admin": "node src/scripts/replace-admin.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

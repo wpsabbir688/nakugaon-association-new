@@ -8,6 +8,87 @@ import { FeeRule } from '../../server/src/models/FeeRule.js';
 let app, agent;
 beforeAll(async () => { app = await startTestDb(); const staff = await makeStaff('SUPER_ADMIN'); agent = request.agent(app); await agent.post('/api/v1/auth/login').send({ email: staff.email, password: 'password123' }).expect(200); }, 600000);
 afterAll(async () => { await stopTestDb(); }, 120000);
+describe('AI Studio sections: leaders, accounts, audit log, future-only fees, settings status', () => {
+  // Runs BEFORE the e2e describe in this file (no journals exist yet at the
+  // first test), and the fee-flow test uses only the trolley category so the
+  // later bhutan/vehicle-rate assertions are untouched. Test fixtures only.
+  let operatorAgent = null;
+  async function operator() {
+    if (operatorAgent) return operatorAgent;
+    const u = await makeStaff('OPERATOR'); const a = request.agent(app);
+    await a.post('/api/v1/auth/login').send({ email: u.email, password: 'password123' }).expect(200);
+    operatorAgent = a; return a;
+  }
+  it('accounts endpoint is empty with no transactions', async () => {
+    const r = await agent.get('/api/v1/accounting/accounts').expect(200);
+    expect(r.body.data.items).toEqual([]); expect(r.body.data.total).toBe(0);
+  });
+  it('accounts endpoint sums journal lines after a posted charge', async () => {
+    const m = await makeMember();
+    const w = await agent.post('/api/v1/weighbridge').send({ memberId: m.memberId, vehicleNumber: 'TEST-1', category: 'bhutan' }).expect(201);
+    expect(w.body.data.feeAmount).toBe(100);
+    const r = await agent.get('/api/v1/accounting/accounts').expect(200);
+    const byCode = Object.fromEntries(r.body.data.items.map((x) => [x.code, x]));
+    expect(byCode['1100']).toMatchObject({ debit: 100, credit: 0, balance: 100 });
+    expect(byCode['4100']).toMatchObject({ debit: 0, credit: 100, balance: -100 });
+  });
+  it('leaders CRUD, public listing hides mobile, non-admin/unauth writes rejected', async () => {
+    await request(app).post('/api/v1/leaders').send({ nameBn: 'X', designationBn: 'Y' }).expect(401);
+    const op = await operator();
+    await op.post('/api/v1/leaders').send({ nameBn: 'X', designationBn: 'Y' }).expect(403);
+    const created = await agent.post('/api/v1/leaders').send({ nameBn: 'Test Name BN', nameEn: 'Test Name', designationBn: 'Test Designation', designationEn: 'Executive Member', firm: 'Test Firm', displayOrder: 1, mobile: '01000000000', photoUrl: 'https://example.test/photo.jpg' }).expect(201);
+    const id = created.body.data._id;
+    const pub = await request(app).get('/api/v1/public/leaders').expect(200);
+    const row = pub.body.data.items.find((x) => x._id === id);
+    expect(row).toBeDefined(); expect(row).not.toHaveProperty('mobile');
+    expect(row).toMatchObject({ nameBn: 'Test Name BN', designationBn: 'Test Designation', firm: 'Test Firm', displayOrder: 1 });
+    await agent.patch(`/v1/leaders/${id}`.replace('/v1/', '/api/v1/')).send({ designationEn: 'President' }).expect(200);
+    const list = await agent.get('/api/v1/leaders').expect(200);
+    expect(list.body.data.items.find((x) => x._id === id).designationEn).toBe('President');
+    await agent.patch(`/api/v1/leaders/${id}`).send({ active: false }).expect(200); // soft archive, never hard delete
+    const pub2 = await request(app).get('/api/v1/public/leaders').expect(200);
+    expect(pub2.body.data.items.find((x) => x._id === id)).toBeUndefined();
+    const list2 = await agent.get('/api/v1/leaders').expect(200);
+    expect(list2.body.data.items.find((x) => x._id === id).active).toBe(false);
+  });
+  it('audit-logs endpoint returns real logs paginated and rejects non-admin roles', async () => {
+    const op = await operator();
+    await op.get('/api/v1/accounting/audit-logs').expect(403);
+    const r = await agent.get('/api/v1/accounting/audit-logs?limit=5').expect(200);
+    expect(r.body.data.items.length).toBeGreaterThan(0); expect(r.body.data.totalPages).toBeGreaterThanOrEqual(1);
+    expect(r.body.data.items[0]).toHaveProperty('action'); expect(r.body.data.items[0]).toHaveProperty('recordType');
+    const f = await agent.get('/api/v1/accounting/audit-logs?action=LEADER_CREATE').expect(200);
+    expect(f.body.data.items.length).toBeGreaterThan(0);
+    expect(f.body.data.items.every((x) => x.action === 'LEADER_CREATE')).toBe(true);
+  });
+  it('fee change is future-only: old rule closed, new rule effective, old snapshot unchanged', async () => {
+    const m = await makeMember();
+    const oldEntry = await agent.post('/api/v1/weighbridge').send({ memberId: m.memberId, vehicleNumber: 'TEST-OLD', category: 'trolley' }).expect(201);
+    expect(oldEntry.body.data.feeAmount).toBe(300);
+    const rules = await agent.get('/api/v1/fee-rules?scope=weighbridge&category=trolley&limit=100').expect(200);
+    const current = rules.body.data.items.filter((x) => !x.effectiveTo).sort((a, b) => new Date(b.effectiveFrom) - new Date(a.effectiveFrom))[0];
+    expect(current.amount).toBe(300);
+    const eff = new Date().toISOString();
+    await agent.patch(`/api/v1/fee-rules/${current._id}`).send({ effectiveTo: eff }).expect(200);
+    await agent.post('/api/v1/fee-rules').send({ scope: 'weighbridge', category: 'trolley', amount: 175, effectiveFrom: eff, reason: 'test future-only change' }).expect(201);
+    const newEntry = await agent.post('/api/v1/weighbridge').send({ memberId: m.memberId, vehicleNumber: 'TEST-NEW', category: 'trolley' }).expect(201);
+    expect(newEntry.body.data.feeAmount).toBe(175);
+    const after = await agent.get('/api/v1/fee-rules?scope=weighbridge&category=trolley&limit=100').expect(200);
+    expect(after.body.data.items.find((x) => x._id === current._id).effectiveTo).toBeTruthy();
+    expect(oldEntry.body.data.feeAmount).toBe(300); // snapshot untouched
+  });
+  it('settings/status rejects non-admin and returns counts without secrets', async () => {
+    const op = await operator();
+    await op.get('/api/v1/settings/status').expect(403);
+    await request(app).get('/api/v1/settings/status').expect(401);
+    const r = await agent.get('/api/v1/settings/status').expect(200);
+    expect(r.body.data.db.connected).toBe(true);
+    expect(r.body.data.app.name).toBe('nakugaon-association-server'); expect(typeof r.body.data.app.version).toBe('string');
+    for (const k of ['members', 'vehicleEntries', 'weighbridgeEntries', 'payments', 'expenses', 'notices', 'leaders', 'auditLogs']) expect(typeof r.body.data.counts[k]).toBe('number');
+    expect(JSON.stringify(r.body)).not.toMatch(/mongodb:|jwt|secret|password/i);
+  });
+});
+
 describe('end-to-end member -> charge -> payment -> statement', () => {
   it('creates member with NAK id, posts weighbridge charge from contract rate, pays partially, statement reconciles', async () => {
     const m = await agent.post('/api/v1/members').send({ fullName: 'Ayesha Traders', businessName: 'Ayesha' }).expect(201);

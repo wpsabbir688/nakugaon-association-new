@@ -46,6 +46,7 @@ export function StaffLayout() {
     ['/admin/weighbridge', t.weighbridge, Scale], ['/admin/payments', t.payments, Wallet], ['/admin/expenses', t.expenses, Receipt],
     ['/admin/fees', t.fees, Settings], ['/admin/notices', t.noticesManage, Bell], ['/admin/reports', t.reports, FileText],
     ['/admin/settings', t.settings, Settings], ['/admin/change-password', t.changePassword, User], ['/admin/audit', t.auditLog, FileText],
+    ['/admin/leaders', t.leaders, Users], ['/admin/ledger', t.memberLedger, FileText], ['/admin/receipts', t.receipts, Receipt], ['/admin/accounts', t.chartOfAccounts, Wallet],
   ]
   const sidebar = <nav aria-label="Staff" className="space-y-1">
     {items.map(([p, label, Icon]) => <NavLink key={p} to={L(lang, p)} onClick={() => setOpen(false)} className={({ isActive }) => `flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500 ${isActive ? 'bg-teal-50 text-teal-800 ring-1 ring-teal-200' : 'text-slate-700'}`}><Icon size={18} />{label}</NavLink>)}
@@ -54,7 +55,7 @@ export function StaffLayout() {
   return <div className="flex min-h-screen flex-col bg-slate-50">
     <header className="bg-navy text-white"><div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
       <Link to={L(lang, '/dashboard')} className="font-bold">{t.orgShort} — {t.dashboard}</Link>
-      <div className="flex items-center gap-2"><span className="hidden text-sm text-teal-200 sm:block">{user?.name || user?.email || ''} ({user?.role || ''})</span><LangSwitcher /><button aria-label="Menu" onClick={() => setOpen(!open)} className="rounded-lg p-2 hover:bg-white/10 lg:hidden">{open ? <X /> : <Menu />}</button></div>
+      <div className="flex items-center gap-2"><Link to={L(lang, '/admin/vehicle-entries')} className="hidden rounded-full bg-teal-600 px-3 py-2 text-sm font-semibold hover:bg-teal-500 sm:block">{t.addVehicleEntry}</Link><Link to={L(lang, '/')} className="hidden rounded-full px-3 py-2 text-sm font-medium hover:bg-white/10 sm:block">{t.publicWebsite}</Link><span className="hidden text-sm text-teal-200 sm:block">{user?.name || user?.email || ''} ({user?.role || ''})</span><LangSwitcher /><button aria-label="Menu" onClick={() => setOpen(!open)} className="rounded-lg p-2 hover:bg-white/10 lg:hidden">{open ? <X /> : <Menu />}</button></div>
     </div></header>
     <div className="mx-auto flex w-full max-w-7xl flex-1 gap-6 px-4 py-6">
       <aside className="hidden w-64 shrink-0 lg:block"><div className="sticky top-4 rounded-2xl border border-slate-200 bg-white p-3">{sidebar}</div></aside>

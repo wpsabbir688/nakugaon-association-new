@@ -11,7 +11,7 @@ import Contact from './pages/public/Contact'
 import { Login, Forgot, Reset } from './pages/auth/Auth'
 import { Dashboard, MembersPage, MemberFormPage, StatementPage } from './pages/staff/StaffPages'
 import { VehicleEntries, Weighbridge, Payments, ReceiptPage, Expenses, Fees } from './pages/staff/Operations'
-import { NoticesManage, Reports, SettingsPage, AuditPage, ChangePasswordPage } from './pages/staff/AdminPages'
+import { NoticesManage, Reports, SettingsPage, AuditPage, ChangePasswordPage, LeadersManage, LedgerPage, AccountsPage } from './pages/staff/AdminPages'
 import { Portal, Correction } from './pages/member/Portal'
 
 const STAFF = ['SUPER_ADMIN', 'MANAGER', 'ACCOUNTANT', 'OPERATOR']
@@ -59,6 +59,10 @@ export default function App() {
       <Route path="admin/settings" element={<Protected roles={ADMIN}><SettingsPage /></Protected>} />
       <Route path="admin/change-password" element={<Protected roles={STAFF}><ChangePasswordPage /></Protected>} />
       <Route path="admin/audit" element={<Protected roles={ADMIN}><AuditPage /></Protected>} />
+      <Route path="admin/leaders" element={<Protected roles={ADMIN}><LeadersManage /></Protected>} />
+      <Route path="admin/ledger" element={<Protected roles={STAFF}><LedgerPage /></Protected>} />
+      <Route path="admin/receipts" element={<Protected roles={STAFF}><Payments /></Protected>} />
+      <Route path="admin/accounts" element={<Protected roles={STAFF}><AccountsPage /></Protected>} />
       <Route path="*" element={<NotFound />} />
     </Route>
     <Route path="*" element={<Navigate to="/bn" replace />} />
